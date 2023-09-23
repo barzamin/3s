@@ -1,11 +1,47 @@
 // use yaxpeax_superh::SuperHDecoder;
 
-use crate::crypto::cps3_kdf;
+use std::{
+    fs::{self, File},
+    path::PathBuf,
+};
 
-mod crypto;
+use anyhow::Result;
+use clap::Parser;
+use pollster::FutureExt;
+use serde::{Deserialize, Serialize};
 
-fn main() {
-    for addr in 0..0x080000 {
-        println!("{:08x}: mask = {:08x}", addr, cps3_kdf(addr, [0xa55432b4, 0x0c129981]));
+mod cps3;
+mod gui;
+
+#[derive(Debug, Parser)]
+struct Args {
+    game: PathBuf,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct GameConfig {
+    key: [u32; 2],
+}
+
+fn main() -> Result<()> {
+    env_logger::init();
+    let args = Args::parse();
+
+    // let game_config: GameConfig = serde_yaml::from_reader(File::open(args.game)?)?;
+    // println!("game_config={:#?}", game_config);
+
+    gui::run().block_on()?;
+
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn verify_cli() {
+        use clap::CommandFactory;
+        Args::command().debug_assert();
     }
 }

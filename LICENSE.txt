@@ -1,0 +1,4 @@
+- code unique to this repo is BSD 3clause
+- keys are from capcom but who cares illegal numbers arent real
+- some code is inspired by or copied over from MAME (for test harnesses); all of that is bsd3clause
+- anything from fbneo is kept under [their license](https://github.com/finalburnneo/FBNeo/blob/master/src/license.txt)

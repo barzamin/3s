@@ -28,20 +28,24 @@ pub fn cps3_kdf(addr: u32, key: [u32; 2]) -> u32 {
 
 #[cfg(test)]
 mod tests {
-    use std::{path::{Path, PathBuf}, fs::{self, File}, io::{BufReader, BufRead}};
     use regex::Regex;
+    use std::{
+        fs::{self, File},
+        io::{BufRead, BufReader},
+        path::{Path, PathBuf},
+    };
 
     use super::*;
 
     #[test]
     fn mame_golden_check_kdf() {
         let KEY: [u32; 2] = [0xa55432b4, 0x0c129981];
-        let path =
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("test/data/kdf_a55432b4_0c129981");
+        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("test/data/kdf_a55432b4_0c129981");
         let rdr = BufReader::new(File::open(path).unwrap());
 
         let kdf_re = Regex::new(r"([0-9a-fA-F]+): mask = ([0-9a-fA-F]+)").unwrap();
-        for line in rdr.lines().take(0x1000) { // only do a small subset for speed
+        for line in rdr.lines().take(0x1000) {
+            // only do a small subset for speed
             if let Ok(line) = line {
                 let caps = kdf_re.captures(&line).unwrap();
                 println!("caps={:?}", caps);
