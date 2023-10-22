@@ -8,7 +8,7 @@ use log::debug;
 use wgpu::{
     Adapter, Backends, CommandEncoderDescriptor, CompositeAlphaMode, Device, DeviceDescriptor,
     Features, Instance, InstanceDescriptor, Limits, PresentMode, Queue, RenderPassDescriptor,
-    RequestAdapterOptions, Surface, SurfaceConfiguration, TextureFormat, TextureUsages,
+    RequestAdapterOptions, Surface, SurfaceConfiguration, TextureFormat, TextureUsages, ShaderModuleDescriptor, ShaderSource, PipelineLayoutDescriptor, RenderPipelineDescriptor, VertexState, FragmentState, BlendState, ColorWrites, PrimitiveState, PrimitiveTopology, FrontFace, PolygonMode, Face, MultisampleState,
 };
 use winit::{
     dpi::PhysicalSize,
@@ -164,6 +164,53 @@ pub async fn run() -> Result<()> {
         },
     );
 
+    // -- BEGIN SCREEN BUFFER STUFF TO FACTOR OUT LATER ---
+    let shader_module = rctx.device.create_shader_module(ShaderModuleDescriptor {
+        label: Some("shader:screen"),
+        source: ShaderSource::Wgsl(include_str!("shader.wgsl").into()),
+    });
+
+    let screen_render_pipeline_layout = rctx.device.create_pipeline_layout(&PipelineLayoutDescriptor {
+        label: Some("pipeline-layout:screen"),
+        bind_group_layouts: &[],
+        push_constant_ranges: &[],
+    });
+    let screen_render_pipeline = rctx.device.create_render_pipeline(&RenderPipelineDescriptor {
+        label: Some("pipeline:scren"),
+        layout: Some(&screen_render_pipeline_layout),
+        vertex: VertexState {
+            module: &shader_module,
+            entry_point: "vert_main",
+            buffers: &[],
+        },
+        fragment: Some(FragmentState {
+            module: &shader_module,
+            entry_point: "frag_main",
+            targets: &[Some(wgpu::ColorTargetState {
+                format: output_surface.format,
+                blend: Some(BlendState::REPLACE),
+                write_mask: ColorWrites::ALL,
+            })],
+        }),
+        primitive: PrimitiveState {
+            topology: PrimitiveTopology::TriangleList,
+            strip_index_format: None,
+            front_face: FrontFace::Ccw,
+            cull_mode: Some(Face::Back),
+            polygon_mode: PolygonMode::Fill,
+            conservative: false,
+            unclipped_depth: false,
+        },
+        depth_stencil: None,
+        multisample: MultisampleState {
+            count: 1,
+            mask: !0,
+            alpha_to_coverage_enabled: false,
+        },
+        multiview: None,
+    });
+    // -- END   SCREEN BUFFER STUFF TO FACTOR OUT LATER ---
+
     let mut last_frame = Instant::now();
     let mut last_cursor = None;
 
@@ -236,6 +283,9 @@ pub async fn run() -> Result<()> {
                         })],
                         depth_stencil_attachment: None,
                     });
+
+                    rp.set_pipeline(&screen_render_pipeline);
+                    rp.draw(0..3, 0..1);
 
                     imgui_renderer
                         .render(imgui.render(), &rctx.queue, &rctx.device, &mut rp)

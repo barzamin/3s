@@ -6,6 +6,7 @@ license = "BSD-3-Clause"
 
 [dependencies]
 anyhow = "1.0.75"
+bytemuck = { version = "1.14.0", features = ["derive"] }
 clap = { version = "4.4.4", features = ["derive"] }
 env_logger = "0.10.0"
 imgui = "0.11.0"
