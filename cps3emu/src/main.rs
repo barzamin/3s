@@ -7,7 +7,6 @@ use std::{
 
 use anyhow::Result;
 use clap::Parser;
-use pollster::FutureExt;
 use serde::{Deserialize, Serialize};
 
 mod cps3;
@@ -27,10 +26,9 @@ fn main() -> Result<()> {
     env_logger::init();
     let args = Args::parse();
 
-    // let game_config: GameConfig = serde_yaml::from_reader(File::open(args.game)?)?;
-    // println!("game_config={:#?}", game_config);
-
-    gui::run().block_on()?;
+    let game_config: GameConfig = serde_yaml::from_reader(File::open(args.game)?)?;
+    println!("game_config={:#?}", game_config);
+    gui::run()?;
 
     Ok(())
 }

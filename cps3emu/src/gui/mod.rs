@@ -1,306 +1,187 @@
-use std::{iter, time::Instant};
+use std::time::Instant;
 
 use anyhow::Result;
-use imgui::{FontConfig, FontSource};
-use imgui_wgpu::{Renderer, RendererConfig};
+use imgui::{FontConfig, FontSource, MouseCursor};
+use imgui_wgpu::RendererConfig;
 use imgui_winit_support::HiDpiMode;
-use log::debug;
-use wgpu::{
-    Adapter, Backends, CommandEncoderDescriptor, CompositeAlphaMode, Device, DeviceDescriptor,
-    Features, Instance, InstanceDescriptor, Limits, PresentMode, Queue, RenderPassDescriptor,
-    RequestAdapterOptions, Surface, SurfaceConfiguration, TextureFormat, TextureUsages, ShaderModuleDescriptor, ShaderSource, PipelineLayoutDescriptor, RenderPipelineDescriptor, VertexState, FragmentState, BlendState, ColorWrites, PrimitiveState, PrimitiveTopology, FrontFace, PolygonMode, Face, MultisampleState,
-};
+use pixels::{Pixels, PixelsContext, SurfaceTexture};
+use wgpu::RenderPassColorAttachment;
 use winit::{
-    dpi::PhysicalSize,
+    dpi::LogicalSize,
     event::{Event, WindowEvent},
     event_loop::EventLoop,
     window::{Window, WindowBuilder},
 };
 
-pub struct RenderCtx {
-    pub instance: Instance,
-    pub adapter: Adapter,
-    pub device: Device,
-    pub queue: Queue,
+pub struct GuiCtx {
+    imgui: imgui::Context,
+    platform: imgui_winit_support::WinitPlatform,
+    renderer: imgui_wgpu::Renderer,
+    last_frame: Instant,
+    last_cursor: Option<MouseCursor>,
+
+    // ...
+    about_open: bool,
 }
 
-impl RenderCtx {
-    pub async fn with_window(window: &Window) -> Result<(Self, Surface)> {
-        let instance = Instance::new(InstanceDescriptor {
-            backends: Backends::DX12 | Backends::VULKAN | Backends::METAL,
-            dx12_shader_compiler: wgpu::Dx12Compiler::Dxc {
-                dxil_path: None,
-                dxc_path: None,
-            }, // todo
-        });
+impl GuiCtx {
+    pub fn new(window: &Window, pixels: &Pixels) -> Self {
+        let mut imgui = imgui::Context::create();
+        imgui.set_ini_filename(None);
 
-        let window_surface = unsafe { instance.create_surface(window) }?;
+        let mut platform = imgui_winit_support::WinitPlatform::init(&mut imgui);
+        platform.attach_window(imgui.io_mut(), window, HiDpiMode::Default);
 
-        let adapter = instance
-            .request_adapter(&RequestAdapterOptions {
-                power_preference: wgpu::PowerPreference::HighPerformance,
-                force_fallback_adapter: false,
-                compatible_surface: Some(&window_surface),
-            })
-            .await
-            .expect("adapter");
+        let hidpi_factor = window.scale_factor();
+        let font_size = (13. * hidpi_factor) as f32;
+        imgui.io_mut().font_global_scale = (1. / hidpi_factor) as f32;
+        imgui.fonts().add_font(&[FontSource::DefaultFontData {
+            config: Some(FontConfig {
+                oversample_h: 1,
+                pixel_snap_h: true,
+                size_pixels: font_size,
+                ..Default::default()
+            }),
+        }]);
 
-        let (device, queue) = adapter
-            .request_device(
-                &DeviceDescriptor {
-                    label: Some("device0"),
-                    features: Features::empty(),
-                    limits: Limits::default(),
-                },
-                None,
-            )
-            .await?;
-
-        Ok((
-            Self {
-                instance,
-                adapter,
-                device,
-                queue,
+        let device = pixels.device();
+        let queue = pixels.queue();
+        let renderer = imgui_wgpu::Renderer::new(
+            &mut imgui,
+            device,
+            queue,
+            RendererConfig {
+                texture_format: pixels.render_texture_format(),
+                ..Default::default()
             },
-            window_surface,
-        ))
-    }
-}
-
-struct OutputSurface {
-    surface: Surface,
-    config: SurfaceConfiguration,
-    // depth_buffer: Texture,
-    format: TextureFormat,
-    dims: PhysicalSize<u32>,
-}
-
-impl OutputSurface {
-    pub fn from_window_surface(
-        rctx: &RenderCtx,
-        window_surface: Surface,
-        dims: PhysicalSize<u32>,
-    ) -> Self {
-        // find a surface format
-        let surface_format = window_surface
-            .get_capabilities(&rctx.adapter)
-            .formats
-            .iter()
-            .filter(|fmt| fmt.is_srgb())
-            .copied()
-            .next()
-            .expect("no srgb surface format");
-        log::debug!(
-            "create_window_surface: surface_formats={:?}",
-            surface_format
         );
 
-        let config = SurfaceConfiguration {
-            usage: TextureUsages::RENDER_ATTACHMENT,
-            format: surface_format,
-            width: dims.width,
-            height: dims.height,
-            present_mode: PresentMode::Fifo,
-            alpha_mode: CompositeAlphaMode::Opaque,
-            view_formats: vec![],
-        };
-
-        window_surface.configure(&rctx.device, &config);
-
         Self {
-            surface: window_surface,
-            config,
-            format: surface_format,
-            dims,
+            imgui,
+            platform,
+            renderer,
+            last_frame: Instant::now(),
+            last_cursor: None,
+
+            // ...
+            about_open: true,
         }
     }
 
-    fn resize(&mut self, rctx: &RenderCtx, inner_size: PhysicalSize<u32>) {
-        debug!("resizing OutputSurface to {:?}", inner_size);
-        self.dims = inner_size;
-        self.config.width = inner_size.width;
-        self.config.height = inner_size.height;
-        self.reconfigure(rctx);
+    pub fn prepare(&mut self, window: &Window) -> Result<(), winit::error::ExternalError> {
+        let now = Instant::now();
+        let dt = now - self.last_frame;
+        self.last_frame = now;
+        self.imgui.io_mut().update_delta_time(dt);
+        self.platform.prepare_frame(self.imgui.io_mut(), window)
     }
 
-    fn reconfigure(&self, rctx: &RenderCtx) {
-        self.surface.configure(&rctx.device, &self.config);
+    pub fn render(
+        &mut self,
+        window: &Window,
+        encoder: &mut wgpu::CommandEncoder,
+        render_target: &wgpu::TextureView,
+        pxctx: &PixelsContext,
+    ) -> imgui_wgpu::RendererResult<()> {
+        let ui = self.imgui.new_frame();
+        let mouse_cursor = ui.mouse_cursor();
+        if self.last_cursor != mouse_cursor {
+            self.last_cursor = mouse_cursor;
+            self.platform.prepare_render(ui, window);
+        }
+
+        // -- gui start --
+        ui.show_about_window(&mut self.about_open);
+        // -- gui end --
+
+        let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("imgui"),
+            color_attachments: &[Some(RenderPassColorAttachment {
+                view: render_target,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Load, // overdraw
+                    store: true,
+                },
+            })],
+            depth_stencil_attachment: None,
+        });
+
+        self.renderer
+            .render(self.imgui.render(), &pxctx.queue, &pxctx.device, &mut rpass)
+    }
+
+    fn handle_event(&mut self, window: &Window, event: &winit::event::Event<()>) {
+        self.platform
+            .handle_event(self.imgui.io_mut(), window, event)
     }
 }
 
-pub async fn run() -> Result<()> {
+fn draw(w: usize, h: usize, fb: &mut [u8]) {
+    for x in 0..w {
+        for y in 0..h {
+            // rgba8
+            fb[x + w + y] = 0xff;
+        }
+    }
+}
+
+pub fn run() -> Result<()> {
+    let [fb_width, fb_height] = [640, 480];
+
     let evloop = EventLoop::new();
-    let window = WindowBuilder::new().build(&evloop)?;
-    let (mut rctx, window_surface) = RenderCtx::with_window(&window).await?;
-    let mut output_surface =
-        OutputSurface::from_window_surface(&rctx, window_surface, window.inner_size());
+    let window = WindowBuilder::new()
+        .with_title("cps3emu")
+        .with_min_inner_size(LogicalSize::new(fb_width, fb_height))
+        .build(&evloop)?;
 
-    let hidpi_factor = window.scale_factor();
+    let window_size = window.inner_size();
 
-    let mut imgui = imgui::Context::create();
-    let mut platform = imgui_winit_support::WinitPlatform::init(&mut imgui);
-    platform.attach_window(imgui.io_mut(), &window, HiDpiMode::Default);
-    imgui.set_ini_filename(None);
+    let mut pixels = {
+        let surface_texture = SurfaceTexture::new(window_size.width, window_size.height, &window);
+        Pixels::new(fb_width, fb_height, surface_texture)?
+    };
 
-    let fontsize = (13. * hidpi_factor) as f32;
-    imgui.io_mut().font_global_scale = (1. / hidpi_factor) as f32;
-    imgui.fonts().add_font(&[FontSource::DefaultFontData {
-        config: Some(FontConfig {
-            oversample_h: 1,
-            pixel_snap_h: true,
-            size_pixels: fontsize,
-            ..Default::default()
-        }),
-    }]);
+    let mut gui = GuiCtx::new(&window, &pixels);
 
-    let mut imgui_renderer = Renderer::new(
-        &mut imgui,
-        &rctx.device,
-        &rctx.queue,
-        RendererConfig {
-            texture_format: output_surface.format,
-            ..Default::default()
-        },
-    );
-
-    // -- BEGIN SCREEN BUFFER STUFF TO FACTOR OUT LATER ---
-    let shader_module = rctx.device.create_shader_module(ShaderModuleDescriptor {
-        label: Some("shader:screen"),
-        source: ShaderSource::Wgsl(include_str!("shader.wgsl").into()),
-    });
-
-    let screen_render_pipeline_layout = rctx.device.create_pipeline_layout(&PipelineLayoutDescriptor {
-        label: Some("pipeline-layout:screen"),
-        bind_group_layouts: &[],
-        push_constant_ranges: &[],
-    });
-    let screen_render_pipeline = rctx.device.create_render_pipeline(&RenderPipelineDescriptor {
-        label: Some("pipeline:scren"),
-        layout: Some(&screen_render_pipeline_layout),
-        vertex: VertexState {
-            module: &shader_module,
-            entry_point: "vert_main",
-            buffers: &[],
-        },
-        fragment: Some(FragmentState {
-            module: &shader_module,
-            entry_point: "frag_main",
-            targets: &[Some(wgpu::ColorTargetState {
-                format: output_surface.format,
-                blend: Some(BlendState::REPLACE),
-                write_mask: ColorWrites::ALL,
-            })],
-        }),
-        primitive: PrimitiveState {
-            topology: PrimitiveTopology::TriangleList,
-            strip_index_format: None,
-            front_face: FrontFace::Ccw,
-            cull_mode: Some(Face::Back),
-            polygon_mode: PolygonMode::Fill,
-            conservative: false,
-            unclipped_depth: false,
-        },
-        depth_stencil: None,
-        multisample: MultisampleState {
-            count: 1,
-            mask: !0,
-            alpha_to_coverage_enabled: false,
-        },
-        multiview: None,
-    });
-    // -- END   SCREEN BUFFER STUFF TO FACTOR OUT LATER ---
-
-    let mut last_frame = Instant::now();
-    let mut last_cursor = None;
-
-    evloop.run(move |ev, tgt, flow| {
+    evloop.run(move |ev, _tgt, flow| {
         flow.set_poll();
         match ev {
-            Event::WindowEvent {
-                window_id,
-                event: ref window_event,
-            } => match window_event {
-                WindowEvent::CloseRequested => flow.set_exit(),
-                WindowEvent::Resized(_) => {
-                    output_surface.resize(&rctx, window.inner_size());
-                }
-                _ => (),
-            },
+            Event::RedrawRequested(_) => {
+                draw(fb_width as usize, fb_height as usize, pixels.frame_mut());
+
+                gui.prepare(&window).expect("prepare");
+
+                pixels
+                    .render_with(|encoder, render_target, pxctx| {
+                        pxctx.scaling_renderer.render(encoder, render_target);
+                        gui.render(&window, encoder, render_target, pxctx)?;
+
+                        Ok(())
+                    })
+                    .expect("woag pixels error !"); // TODO: proper error handling
+            }
 
             Event::MainEventsCleared => {
                 window.request_redraw();
             }
 
-            Event::RedrawRequested(_) => {
-                let delta_s = last_frame.elapsed();
-                let now = Instant::now();
-                imgui.io_mut().update_delta_time(now - last_frame);
-                last_frame = now;
-
-                let output_tex = output_surface.surface.get_current_texture().expect("uhh");
-                platform
-                    .prepare_frame(imgui.io_mut(), &window)
-                    .expect("prepare frame");
-
-                let ui = imgui.frame();
-                {
-                    // ui.show_demo_window(&mut demo_open);
-                    ui.main_menu_bar(|| {
-                        ui.menu("File", || {});
-                        ui.menu("Debug", || {});
-                    });
+            Event::WindowEvent {
+                event: ref window_event,
+                ..
+            } => match window_event {
+                WindowEvent::CloseRequested => flow.set_exit(),
+                WindowEvent::Resized(size) => {
+                    pixels
+                        .resize_surface(size.width, size.height)
+                        .expect("can't resize");
                 }
-
-                let mut encoder = rctx
-                    .device
-                    .create_command_encoder(&CommandEncoderDescriptor {
-                        label: Some("encoder0"),
-                    });
-
-                if last_cursor != Some(ui.mouse_cursor()) {
-                    last_cursor = Some(ui.mouse_cursor());
-                    platform.prepare_render(ui, &window);
-                }
-
-                let output_view = output_tex.texture.create_view(&Default::default());
-
-                {
-                    let mut rp = encoder.begin_render_pass(&RenderPassDescriptor {
-                        label: Some("pass:imgui"),
-                        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                            view: &output_view,
-                            resolve_target: None,
-                            ops: wgpu::Operations {
-                                load: wgpu::LoadOp::Clear(wgpu::Color {
-                                    r: 0.1,
-                                    g: 0.2,
-                                    b: 0.3,
-                                    a: 1.0,
-                                }),
-                                store: true,
-                            },
-                        })],
-                        depth_stencil_attachment: None,
-                    });
-
-                    rp.set_pipeline(&screen_render_pipeline);
-                    rp.draw(0..3, 0..1);
-
-                    imgui_renderer
-                        .render(imgui.render(), &rctx.queue, &rctx.device, &mut rp)
-                        .expect("imgui render");
-                }
-
-                rctx.queue.submit(iter::once(encoder.finish()));
-                output_tex.present();
-            }
+                _ => (),
+            },
 
             _ => (),
         }
 
-        platform.handle_event(imgui.io_mut(), &window, &ev);
+        gui.handle_event(&window, &ev);
     });
-
-    Ok(())
 }
