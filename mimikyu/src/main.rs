@@ -1,5 +1,3 @@
-// use yaxpeax_superh::SuperHDecoder;
-
 use std::{
     fs::{self, File},
     path::PathBuf,
@@ -11,6 +9,7 @@ use serde::{Deserialize, Serialize};
 
 mod cps3;
 mod gui;
+mod cpu;
 
 #[derive(Debug, Parser)]
 struct Args {
@@ -28,7 +27,8 @@ fn main() -> Result<()> {
 
     let game_config: GameConfig = serde_yaml::from_reader(File::open(args.game)?)?;
     println!("game_config={:#?}", game_config);
-    gui::run()?;
+    // gui::run()?;
+
 
     Ok(())
 }

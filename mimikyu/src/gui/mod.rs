@@ -4,7 +4,7 @@ use anyhow::Result;
 use imgui::{FontConfig, FontSource, MouseCursor};
 use imgui_wgpu::RendererConfig;
 use imgui_winit_support::HiDpiMode;
-use pixels::{Pixels, PixelsContext, SurfaceTexture};
+use pixels::{Pixels, PixelsContext, SurfaceTexture, PixelsBuilder};
 use wgpu::RenderPassColorAttachment;
 use winit::{
     dpi::LogicalSize,
@@ -117,14 +117,18 @@ impl GuiCtx {
     }
 }
 
-fn draw(w: usize, h: usize, fb: &mut [u8]) {
-    for x in 0..w {
-        for y in 0..h {
-            // rgba8
-            fb[x + w + y] = 0xff;
-        }
-    }
-}
+// fn draw(w: usize, h: usize, fb: &mut [u8]) {
+//     for x in 0..w {
+//         for y in 0..h {
+//             // rgba8
+//             let p = (y * w + x) * 4;
+//             fb[p + 0] = 0xff;
+//             fb[p + 1] = 0x00;
+//             fb[p + 2] = 0xff;
+//             fb[p + 3] = 0xff;
+//         }
+//     }
+// }
 
 pub fn run() -> Result<()> {
     let [fb_width, fb_height] = [640, 480];
@@ -139,7 +143,7 @@ pub fn run() -> Result<()> {
 
     let mut pixels = {
         let surface_texture = SurfaceTexture::new(window_size.width, window_size.height, &window);
-        Pixels::new(fb_width, fb_height, surface_texture)?
+        PixelsBuilder::new(fb_width, fb_height, surface_texture).texture_format(wgpu::TextureFormat::Rgba8UnormSrgb).build()?
     };
 
     let mut gui = GuiCtx::new(&window, &pixels);
@@ -148,7 +152,7 @@ pub fn run() -> Result<()> {
         flow.set_poll();
         match ev {
             Event::RedrawRequested(_) => {
-                draw(fb_width as usize, fb_height as usize, pixels.frame_mut());
+                // draw(fb_width as usize, fb_height as usize, pixels.frame_mut());
 
                 gui.prepare(&window).expect("prepare");
 

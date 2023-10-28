@@ -1,0 +1,1 @@
+default `address_map_constructor` is `address_map_constructor(FUNC(sh2_device::sh7604_map), this)`
