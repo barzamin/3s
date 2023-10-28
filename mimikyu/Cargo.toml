@@ -20,6 +20,9 @@ imgui-winit-support = "0.11"
 imgui-wgpu = "0.24.0"
 wgpu = "0.17"
 thiserror = "1.0.50"
+bitflags = "2.4.1"
+yaxpeax-sm83 = "0.2.0"
+yaxpeax-arch = "0.2.7"
 
 [dependencies.pixels]
 git = "https://github.com/barzamin/pixels.git"

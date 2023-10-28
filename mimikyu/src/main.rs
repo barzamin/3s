@@ -1,15 +1,17 @@
 use std::{
     fs::{self, File},
-    path::PathBuf,
+    io::Read,
+    path::{Path, PathBuf},
 };
 
 use anyhow::Result;
 use clap::Parser;
+use log::info;
 use serde::{Deserialize, Serialize};
 
 mod cps3;
-mod gui;
 mod cpu;
+mod gui;
 
 #[derive(Debug, Parser)]
 struct Args {
@@ -23,12 +25,19 @@ struct GameConfig {
 
 fn main() -> Result<()> {
     env_logger::init();
-    let args = Args::parse();
+    // let args = Args::parse();
 
-    let game_config: GameConfig = serde_yaml::from_reader(File::open(args.game)?)?;
-    println!("game_config={:#?}", game_config);
+    // let game_config: GameConfig = serde_yaml::from_reader(File::open(args.game)?)?;
+    // println!("game_config={:#?}", game_config);
     // gui::run()?;
 
+    let mut cpu = cpu::lr35902::Lr35902::new();
+    info!("reading DMG bootstrap rom into memory");
+    let mut f = fs::File::open(Path::new(env!("CARGO_MANIFEST_DIR")).join("data/DMG_ROM.bin"))?;
+    f.read(&mut cpu.memory)?;
+    for _ in 0..4 {
+        cpu.execute(16);
+    }
 
     Ok(())
 }

@@ -1,5 +1,5 @@
-use yaxpeax_superh::{SuperHInstruction, SuperHFeatures, SuperHLevel};
 use thiserror::Error;
+use yaxpeax_superh::{SuperHFeatures, SuperHInstruction, SuperHLevel};
 
 #[derive(Error, Debug)]
 pub(crate) enum Sh2CPUError {
@@ -264,7 +264,8 @@ impl Sh2 {
 
     fn decode(&self, opcode: u16) -> Result<SuperHInstruction, Sh2CPUError> {
         let fpscr_sz = false;
-        let instr = SuperHInstruction::parse(opcode, fpscr_sz).ok_or(Sh2CPUError::BadInstruction)?;
+        let instr =
+            SuperHInstruction::parse(opcode, fpscr_sz).ok_or(Sh2CPUError::BadInstruction)?;
         if instr.level() > SuperHLevel::Sh2 || !instr.features().is_empty() {
             return Err(Sh2CPUError::BadInstruction);
         }

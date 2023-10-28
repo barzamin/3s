@@ -1,5 +1,5 @@
 {
     "rust-analyzer.linkedProjects": [
-        "./cps3emu/Cargo.toml"
+        "./mimikyu/Cargo.toml"
     ]
 }

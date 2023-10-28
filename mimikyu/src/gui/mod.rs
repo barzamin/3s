@@ -4,7 +4,7 @@ use anyhow::Result;
 use imgui::{FontConfig, FontSource, MouseCursor};
 use imgui_wgpu::RendererConfig;
 use imgui_winit_support::HiDpiMode;
-use pixels::{Pixels, PixelsContext, SurfaceTexture, PixelsBuilder};
+use pixels::{Pixels, PixelsBuilder, PixelsContext, SurfaceTexture};
 use wgpu::RenderPassColorAttachment;
 use winit::{
     dpi::LogicalSize,
@@ -143,7 +143,9 @@ pub fn run() -> Result<()> {
 
     let mut pixels = {
         let surface_texture = SurfaceTexture::new(window_size.width, window_size.height, &window);
-        PixelsBuilder::new(fb_width, fb_height, surface_texture).texture_format(wgpu::TextureFormat::Rgba8UnormSrgb).build()?
+        PixelsBuilder::new(fb_width, fb_height, surface_texture)
+            .texture_format(wgpu::TextureFormat::Rgba8UnormSrgb)
+            .build()?
     };
 
     let mut gui = GuiCtx::new(&window, &pixels);
