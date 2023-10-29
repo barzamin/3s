@@ -1,7 +1,6 @@
 use bitflags::bitflags;
 use core::fmt;
-use log::debug;
-use std::ops;
+use log::{debug, trace};
 use yaxpeax_arch::{Decoder, ReadError, Reader};
 use yaxpeax_sm83::{InstDecoder, Instruction, Operand};
 
@@ -218,15 +217,21 @@ impl OperandExt for Operand {
     }
 
     fn is_reg8(&self) -> bool {
-        matches!(self, Self::A | Self::B | Self::C | Self::D | Self::E | Self::H | Self::L)
-        }
+        matches!(
+            self,
+            Self::A | Self::B | Self::C | Self::D | Self::E | Self::H | Self::L
+        )
+    }
 
     fn is_reg16(&self) -> bool {
         matches!(self, Self::AF | Self::BC | Self::DE | Self::HL)
     }
 
     fn is_indirect(&self) -> bool {
-        matches!(self, Self::DerefBC | Self::DerefDE | Self::DerefHL | Self::DerefDecHL | Self::DerefIncHL)
+        matches!(
+            self,
+            Self::DerefBC | Self::DerefDE | Self::DerefHL | Self::DerefDecHL | Self::DerefIncHL
+        )
     }
 
     fn as_condition(&self) -> Option<Condition> {
@@ -536,7 +541,22 @@ impl Lr35902 {
                     3
                 }
             }
-            RET => todo!(),
+            RET => {
+                if let Some(cc) = instr.operands()[0].as_condition() {
+                    if self.regs.f.check_condition(cc) {
+                        // taken
+                        self.pc = self.stack_pop();
+
+                        5
+                    } else {
+                        2
+                    }
+                } else {
+                    self.pc = self.stack_pop();
+
+                    4
+                }
+            }
             RETI => todo!(),
             HALT => todo!(),
             RST => todo!(),
@@ -655,16 +675,16 @@ impl Lr35902 {
     pub fn execute(&mut self, mut cycles: i32) {
         let decoder = InstDecoder::default();
         loop {
-            debug!("run instruction at pc={:#06x}", self.pc);
+            trace!("run instruction at pc={:#06x}", self.pc);
             let instr = decoder.decode(self).unwrap();
-            debug!("decoded: {} ({:?})", instr, instr);
+            trace!("decoded: {} ({:?})", instr, instr);
 
             let latency = self.run_one_instr(&instr);
-            debug!("completed: {} cycles", latency);
+            trace!("completed: {} cycles", latency);
 
             {
-                debug!("pc: {:#06x} sp: {:#06x}", self.pc, self.sp);
-                debug!("regs:\n{}", self.regs);
+                trace!("pc: {:#06x} sp: {:#06x}", self.pc, self.sp);
+                trace!("regs:\n{}", self.regs);
             }
 
             cycles -= latency as i32;
