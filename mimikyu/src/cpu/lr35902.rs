@@ -101,6 +101,32 @@ impl Registers {
         self.h = ((val & 0xff00) >> 8) as u8;
         self.l = (val & 0xff) as u8;
     }
+
+    pub fn by_operand(&self, operand: &Operand) -> Option<u8> {
+        match operand {
+            Operand::A => Some(self.a),
+            Operand::B => Some(self.b),
+            Operand::C => Some(self.c),
+            Operand::D => Some(self.d),
+            Operand::E => Some(self.e),
+            Operand::H => Some(self.h),
+            Operand::L => Some(self.l),
+            _ => None,
+        }
+    }
+
+    pub fn by_operand_mut(&mut self, operand: &Operand) -> Option<&mut u8> {
+        match operand {
+            Operand::A => Some(&mut self.a),
+            Operand::B => Some(&mut self.b),
+            Operand::C => Some(&mut self.c),
+            Operand::D => Some(&mut self.d),
+            Operand::E => Some(&mut self.e),
+            Operand::H => Some(&mut self.h),
+            Operand::L => Some(&mut self.l),
+            _ => None,
+        }
+    }
 }
 
 pub struct Lr35902 {
@@ -150,7 +176,7 @@ impl Reader<u16, u8> for Lr35902 {
 trait OperandProperties {
     fn is_imm8(&self) -> bool;
     fn is_imm16(&self) -> bool;
-    fn is_mem16(&self) -> bool;
+    fn is_reg8(&self) -> bool;
     fn is_indirect(&self) -> bool;
     fn as_condition(&self) -> Option<Condition>;
 }
@@ -159,6 +185,7 @@ impl OperandProperties for Operand {
     fn is_imm8(&self) -> bool {
         match self {
             Self::D8(_) => true,
+            Self::DerefHighD8(_) => true,
             _ => false,
         }
     }
@@ -166,6 +193,20 @@ impl OperandProperties for Operand {
     fn is_imm16(&self) -> bool {
         match self {
             Self::D16(_) => true,
+            Self::A16(_) => true,
+            _ => false,
+        }
+    }
+
+    fn is_reg8(&self) -> bool {
+        match self {
+            Self::A => true,
+            Self::B => true,
+            Self::C => true,
+            Self::D => true,
+            Self::E => true,
+            Self::H => true,
+            Self::L => true,
             _ => false,
         }
     }
@@ -175,13 +216,6 @@ impl OperandProperties for Operand {
             Self::DerefBC | Self::DerefDE | Self::DerefHL | Self::DerefDecHL | Self::DerefIncHL => {
                 true
             }
-            _ => false,
-        }
-    }
-
-    fn is_mem16(&self) -> bool {
-        match self {
-            Self::A16(_) => true,
             _ => false,
         }
     }
@@ -267,7 +301,7 @@ impl Lr35902 {
                         if src.is_imm16() {
                             cycles += 2;
                         }
-                        if dest.is_mem16() {
+                        if dest.is_imm16() {
                             cycles += 2;
                         }
 
@@ -280,7 +314,8 @@ impl Lr35902 {
                     | Operand::DerefIncHL => {
                         // 8 bits to memory, full 16b address
                         let val = self.read_src8_opr(src);
-                        self.write_mem8_opr(dest, val);
+                        let addr = self.compute_addr(dest);
+                        self.mem_write(addr, val);
 
                         if src.is_imm8() {
                             3
@@ -457,23 +492,12 @@ impl Lr35902 {
     }
 
     fn write_reg8_opr(&mut self, dest: &Operand, val: u8) {
-        use yaxpeax_sm83::Operand::*;
-        let mut reg = match dest {
-            B => &mut self.regs.b,
-            C => &mut self.regs.c,
-            D => &mut self.regs.d,
-            E => &mut self.regs.e,
-            H => &mut self.regs.h,
-            L => &mut self.regs.l,
-            A => &mut self.regs.a,
-            _ => unreachable!(),
-        };
-
+        let reg = self.regs.by_operand_mut(dest).unwrap();
         *reg = val;
     }
 
     fn write_reg16_opr(&mut self, dest: &Operand, val: u16) {
-        let mut reg = match dest {
+        match dest {
             Operand::AF => self.regs.set_af(val),
             Operand::BC => self.regs.set_bc(val),
             Operand::DE => self.regs.set_de(val),
@@ -483,8 +507,8 @@ impl Lr35902 {
         };
     }
 
-    fn write_mem8_opr(&mut self, dest: &Operand, val: u8) {
-        let addr = match dest {
+    fn compute_addr(&mut self, dest: &Operand) -> u16 {
+        match dest {
             Operand::DerefHL => self.regs.hl(),
             Operand::DerefBC => self.regs.bc(),
             Operand::DerefDE => self.regs.de(),
@@ -498,25 +522,22 @@ impl Lr35902 {
                 self.regs.set_hl(a + 1);
                 a
             }
+            Operand::DerefHighC => 0xff00 | (self.regs.c as u16),
+            Operand::DerefHighD8(imm) => 0xff00 | (*imm as u16),
             _ => unreachable!(),
-        };
-
-        self.mem_write(addr, val)
+        }
     }
 
-    pub fn read_src8_opr(&self, src: &Operand) -> u8 {
-        use yaxpeax_sm83::Operand::*;
-        match src {
-            B => self.regs.b,
-            C => self.regs.c,
-            D => self.regs.d,
-            E => self.regs.e,
-            H => self.regs.h,
-            L => self.regs.l,
-            DerefHL => todo!(),
-            A => self.regs.a,
-            D8(imm) => *imm,
-            _ => unimplemented!("cant read src8 opr {:?}", src),
+    pub fn read_src8_opr(&mut self, operand: &Operand) -> u8 {
+        if let &Operand::D8(imm) = operand {
+            imm
+        } else if operand.is_reg8() {
+            self.regs.by_operand(operand).unwrap()
+        } else if operand.is_indirect() {
+            let addr = self.compute_addr(&operand);
+            self.mem_read(addr)
+        } else {
+            unimplemented!()
         }
     }
 
