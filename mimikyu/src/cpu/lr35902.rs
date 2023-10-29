@@ -319,8 +319,8 @@ impl Lr35902 {
         //  /new sp /old sp
         // v       v
         // msb lsb ...
-        self.mem_write(self.sp, ((0xff00 & self.pc) >> 8) as u8); // msb
-        self.mem_write(self.sp + 1, (0xff & self.pc) as u8); // lsb
+        self.mem_write(self.sp, ((0xff00 & val) >> 8) as u8); // msb
+        self.mem_write(self.sp + 1, (0xff & val) as u8); // lsb
     }
 
     fn stack_pop(&mut self) -> u16 {
