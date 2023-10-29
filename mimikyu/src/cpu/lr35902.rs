@@ -9,14 +9,19 @@ use yaxpeax_sm83::{InstDecoder, Instruction, Operand};
 bitflags! {
     #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
     pub struct Flags: u8 {
+        /// set when result is zero
         const Z = 1 << 7;
+        /// set after subtraction ops
         const N = 1 << 6;
+        /// half-carry (did [3:0] carry to [7:4]?)
         const H = 1 << 5;
+        /// carry
         const CY = 1 << 4;
     }
 }
 
 impl Flags {
+    /// returns true if the [`Condition`] is fulfilled by this set of flags.
     fn check_condition(&self, cc: Condition) -> bool {
         match cc {
             Condition::NZ => !self.contains(Self::Z),
@@ -27,6 +32,7 @@ impl Flags {
     }
 }
 
+/// Condition codes for control flow (jumps, calls, etc.)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Condition {
     NZ,
@@ -56,9 +62,9 @@ pub struct Registers {
 
 impl fmt::Display for Registers {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "a: {:#04x}  f: {:#04x}\n", self.a, self.f)?;
-        write!(f, "b: {:#04x}  c: {:#04x}\n", self.b, self.c)?;
-        write!(f, "d: {:#04x}  e: {:#04x}\n", self.d, self.e)?;
+        writeln!(f, "a: {:#04x}  f: {:#04x}", self.a, self.f)?;
+        writeln!(f, "b: {:#04x}  c: {:#04x}", self.b, self.c)?;
+        writeln!(f, "d: {:#04x}  e: {:#04x}", self.d, self.e)?;
         write!(f, "h: {:#04x}  l: {:#04x}", self.h, self.l)?;
 
         Ok(())
@@ -197,41 +203,30 @@ trait OperandExt {
     fn is_imm8(&self) -> bool;
     fn is_imm16(&self) -> bool;
     fn is_reg8(&self) -> bool;
+    fn is_reg16(&self) -> bool;
     fn is_indirect(&self) -> bool;
     fn as_condition(&self) -> Option<Condition>;
 }
 
 impl OperandExt for Operand {
     fn is_imm8(&self) -> bool {
-        match self {
-            Self::D8(_) => true,
-            Self::DerefHighD8(_) => true,
-            _ => false,
-        }
+        matches!(self, Self::D8(_) | Self::DerefHighD8(_))
     }
 
     fn is_imm16(&self) -> bool {
-        match self {
-            Self::D16(_) => true,
-            Self::A16(_) => true,
-            _ => false,
-        }
+        matches!(self, Self::D16(_) | Self::A16(_))
     }
 
     fn is_reg8(&self) -> bool {
-        match self {
-            Self::A | Self::B | Self::C | Self::D | Self::E | Self::H | Self::L => true,
-            _ => false,
+        matches!(self, Self::A | Self::B | Self::C | Self::D | Self::E | Self::H | Self::L)
         }
+
+    fn is_reg16(&self) -> bool {
+        matches!(self, Self::AF | Self::BC | Self::DE | Self::HL)
     }
 
     fn is_indirect(&self) -> bool {
-        match self {
-            Self::DerefBC | Self::DerefDE | Self::DerefHL | Self::DerefDecHL | Self::DerefIncHL => {
-                true
-            }
-            _ => false,
-        }
+        matches!(self, Self::DerefBC | Self::DerefDE | Self::DerefHL | Self::DerefDecHL | Self::DerefIncHL)
     }
 
     fn as_condition(&self) -> Option<Condition> {
@@ -302,7 +297,7 @@ impl Lr35902 {
     }
 
     pub fn instr_read(&self, addr: u16) -> u8 {
-        return self.mem_read(addr);
+        self.mem_read(addr)
     }
 
     /// Unpack yaxpeax operand array, figure out which is the offset/addr and which is the condition (if present),
@@ -415,29 +410,28 @@ impl Lr35902 {
             INC => {
                 let [opr, _] = instr.operands();
                 if opr.is_indirect() {
-                    let addr = self.compute_addr(&opr);
+                    let addr = self.compute_addr(opr);
                     let val = self.mem_read(addr);
                     self.mem_write(addr, val.wrapping_add(1));
 
                     3
                 } else {
-                    let val = self.read_src8_opr(&opr);
-                    self.write_reg8_opr(&opr, val.wrapping_add(1));
+                    let val = self.read_src8_opr(opr);
+                    self.write_reg8_opr(opr, val.wrapping_add(1));
 
                     1
                 }
             }
             DEC => {
                 let [opr, _] = instr.operands();
-                if opr.is_indirect() {
-                    let addr = self.compute_addr(&opr);
+                    let addr = self.compute_addr(opr);
                     let val = self.mem_read(addr);
-                    self.mem_write(addr, val.wrapping_add(1));
+                    self.mem_write(addr, val.wrapping_sub(1));
 
                     3
                 } else {
-                    let val = self.read_src8_opr(&opr);
-                    self.write_reg8_opr(&opr, val.wrapping_add(1));
+                    let val = self.read_src8_opr(opr);
+                    self.write_reg8_opr(opr, val.wrapping_sub(1));
 
                     1
                 }
@@ -450,7 +444,7 @@ impl Lr35902 {
             AND => {
                 // AND A, x
                 let [operand, _] = instr.operands();
-                let other = self.read_src8_opr(&operand);
+                let other = self.read_src8_opr(operand);
 
                 self.regs.a &= other;
                 if self.regs.a == 0 {
@@ -466,7 +460,7 @@ impl Lr35902 {
             }
             XOR => {
                 let [operand, _] = instr.operands();
-                let other = self.read_src8_opr(&operand);
+                let other = self.read_src8_opr(operand);
                 self.regs.a &= other;
                 self.regs.f = Flags::empty();
                 if self.regs.a == 0 {
@@ -499,7 +493,7 @@ impl Lr35902 {
             JR => {
                 // PC-relative jump, possibly conditional
                 let (taken, o_offs) = self.compute_branch(instr.operands());
-                log::trace!("JR: taken={}", taken);
+                trace!("JR: taken={}", taken);
                 if taken {
                     let offs = if let Operand::R8(offs) = o_offs {
                         offs
@@ -516,7 +510,7 @@ impl Lr35902 {
             }
             CALL => {
                 let (taken, o_addr) = self.compute_branch(instr.operands());
-                log::trace!("CALL: taken={}", taken);
+                trace!("CALL: taken={}", taken);
                 if taken {
                     let addr = if let Operand::D16(imm) = o_addr {
                         imm
@@ -692,12 +686,12 @@ impl Lr35902 {
             Operand::DerefDE => self.regs.de(),
             Operand::DerefDecHL => {
                 let a = self.regs.hl();
-                self.regs.set_hl(a - 1);
+                self.regs.set_hl(a.wrapping_sub(1));
                 a
             }
             Operand::DerefIncHL => {
                 let a = self.regs.hl();
-                self.regs.set_hl(a + 1);
+                self.regs.set_hl(a.wrapping_add(1));
                 a
             }
             Operand::DerefHighC => 0xff00 | (self.regs.c as u16),
@@ -712,7 +706,7 @@ impl Lr35902 {
         } else if operand.is_reg8() {
             self.regs.by_operand(operand).unwrap()
         } else if operand.is_indirect() {
-            let addr = self.compute_addr(&operand);
+            let addr = self.compute_addr(operand);
             self.mem_read(addr)
         } else {
             unimplemented!()
@@ -748,7 +742,7 @@ mod test {
         assert_eq!(0xd335, registers.hl());
 
         assert_eq!(registers.a, 0x13);
-        assert_eq!(registers.f.bits, 0x37);
+        assert_eq!(registers.f.bits(), 0x37);
         assert_eq!(registers.b, 0xca);
         assert_eq!(registers.c, 0xfe);
         assert_eq!(registers.d, 0xb0);
