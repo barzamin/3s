@@ -409,7 +409,12 @@ impl Lr35902 {
             }
             INC => {
                 let [opr, _] = instr.operands();
-                if opr.is_indirect() {
+                if opr.is_reg16() {
+                    let val = self.read_src16_opr(opr);
+                    self.write_reg16_opr(opr, val.wrapping_add(1));
+
+                    2
+                } else if opr.is_indirect() {
                     let addr = self.compute_addr(opr);
                     let val = self.mem_read(addr);
                     self.mem_write(addr, val.wrapping_add(1));
@@ -424,6 +429,12 @@ impl Lr35902 {
             }
             DEC => {
                 let [opr, _] = instr.operands();
+                if opr.is_reg16() {
+                    let val = self.read_src16_opr(opr);
+                    self.write_reg16_opr(opr, val.wrapping_sub(1));
+
+                    2
+                } else if opr.is_indirect() {
                     let addr = self.compute_addr(opr);
                     let val = self.mem_read(addr);
                     self.mem_write(addr, val.wrapping_sub(1));
