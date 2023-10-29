@@ -1,6 +1,6 @@
 use bitflags::bitflags;
-use log::debug;
 use core::fmt;
+use log::debug;
 use std::ops;
 use yaxpeax_arch::{Decoder, ReadError, Reader};
 use yaxpeax_sm83::{InstDecoder, Instruction, Operand};
@@ -256,6 +256,20 @@ impl Lr35902 {
         return self.mem_read(addr);
     }
 
+    /// Unpack yaxpeax operand array, figure out which is the offset/addr and which is the condition (if present),
+    /// and return `(taken, offset_or_addr_operand)`.
+    fn compute_branch(&mut self, operands: &[Operand; 2]) -> (bool, Operand) {
+        if let Some(cc) = operands[0].as_condition() {
+            let o_offs = operands[1];
+            let taken = self.regs.f.check_condition(cc);
+
+            (taken, o_offs)
+        } else {
+            let o_offs = operands[0];
+            (true, o_offs)
+        }
+    }
+
     pub fn run_one_instr(&mut self, instr: &Instruction) -> u32 {
         use yaxpeax_sm83::Opcode::*;
         match instr.opcode() {
@@ -372,22 +386,14 @@ impl Lr35902 {
             JP => todo!(),
             JR => {
                 // PC-relative jump, possibly conditional
-
-                let (taken, o_offs) = if let Some(cc) = instr.operands()[0].as_condition() {
-                    let o_offs = instr.operands()[1];
-                    let taken = self.regs.f.check_condition(cc);
-
-                    (taken, o_offs)
-                } else {
-                    let o_offs = instr.operands()[0];
-                    (true, o_offs)
-                };
-
-                log::trace!("branch: taken={}", taken);
+                let (taken, o_offs) = self.compute_branch(instr.operands());
+                log::trace!("JR: taken={}", taken);
                 if taken {
                     let offs = if let Operand::R8(offs) = o_offs {
                         offs
-                    } else { unreachable!(); };
+                    } else {
+                        unreachable!();
+                    };
 
                     self.pc = self.pc.wrapping_add_signed(offs as i16);
 
@@ -395,8 +401,25 @@ impl Lr35902 {
                 } else {
                     3
                 }
+            }
+            CALL => {
+                let (taken, o_addr) = self.compute_branch(instr.operands());
+                log::trace!("CALL: taken={}", taken);
+                if taken {
+                    let addr = if let Operand::D16(imm) = o_addr { imm } else { unreachable!() };
+                    self.sp -= 2;
+                    //  /new sp /old sp
+                    // v       v
+                    // msb lsb ...
+                    self.mem_write(self.sp, ((0xff00 & self.pc) >> 8) as u8); // msb
+                    self.mem_write(self.sp + 1, (0xff & self.pc) as u8); // lsb
+                    self.pc = addr;
+
+                    6
+                } else {
+                    3
+                }
             },
-            CALL => todo!(),
             RET => todo!(),
             RETI => todo!(),
             HALT => todo!(),
