@@ -102,6 +102,26 @@ impl Registers {
         self.l = (val & 0xff) as u8;
     }
 
+    pub fn pair_by_operand(&self, operand: &Operand) -> Option<u16> {
+        match operand {
+            Operand::AF => Some(self.af()),
+            Operand::BC => Some(self.bc()),
+            Operand::DE => Some(self.de()),
+            Operand::HL => Some(self.hl()),
+            _ => None,
+        }
+    }
+
+    pub fn set_pair_by_operand(&mut self, operand: &Operand, val: u16) {
+        match operand {
+            Operand::AF => self.set_af(val),
+            Operand::BC => self.set_bc(val),
+            Operand::DE => self.set_de(val),
+            Operand::HL => self.set_hl(val),
+            _ => unreachable!(),
+        }
+    }
+
     pub fn by_operand(&self, operand: &Operand) -> Option<u8> {
         match operand {
             Operand::A => Some(self.a),
@@ -173,7 +193,7 @@ impl Reader<u16, u8> for Lr35902 {
     }
 }
 
-trait OperandProperties {
+trait OperandExt {
     fn is_imm8(&self) -> bool;
     fn is_imm16(&self) -> bool;
     fn is_reg8(&self) -> bool;
@@ -181,7 +201,7 @@ trait OperandProperties {
     fn as_condition(&self) -> Option<Condition>;
 }
 
-impl OperandProperties for Operand {
+impl OperandExt for Operand {
     fn is_imm8(&self) -> bool {
         match self {
             Self::D8(_) => true,
@@ -200,13 +220,7 @@ impl OperandProperties for Operand {
 
     fn is_reg8(&self) -> bool {
         match self {
-            Self::A => true,
-            Self::B => true,
-            Self::C => true,
-            Self::D => true,
-            Self::E => true,
-            Self::H => true,
-            Self::L => true,
+            Self::A | Self::B | Self::C | Self::D | Self::E | Self::H | Self::L => true,
             _ => false,
         }
     }
@@ -230,6 +244,41 @@ impl OperandProperties for Operand {
         }
     }
 }
+
+/*
+ -- SoC registers --
+ reg  addr    d7   | d6   |  d5   |  d4   |  d3   |  d2   |  d1    | d0     | dir      comment
+ P1   FF00     \   |  \   |  P15  |  P14  |  P13  |  P12  |  P11   | P10    | R/W      "control of transfer data by P14, P15"
+ SB   FF01         |      |       |       |       |       |        |        | R/W      transfer data
+ SC   FF02    txs  |  \   |  \    |  \    |  \    |  \    |  cksp  | cksh   | R/W      tx speed, clock speed, shift clock {ext, int}
+ DIV  FF04    64hz |  ... | ..... | ..... | ..... | ..... | ...... | 8192hz | R/W      clock divider
+ TIMA FF05         |      |       |       |       |       |        |        | R/W      timer
+ TMA  FF06         |      |       |       |       |       |        |        | R/W      timer preset
+ TAC  FF07         |      |       |       |       |       |  stop  | freq   | R/W      timer ctl
+ IF   FF0F         |      |       |       |       |       |        |        | R/W      interrupt req
+ IF   FFFF         |      |       |       |       |       |        |        | R/W      interrupt enable
+ IME          ---- | ---- | --- 1 |  bit  | cpu r | eg -- | ------ | -----  | R/W*     global int enable; DI/EI
+ LCDC FF40    x    | x    | x     |  x    | x     | x     | x      | x      | R/W      LCD controller
+ STAT FF41    \    | x    | x     |  x    | x     | x     | x      | x      | R/(W3-5) LCD controller status
+ SCY  FF42    .... | .... | ..... | ..... | ..... | ..... | ...... | ...... | R/W      scroll Y reg
+ SCX  FF43    .... | .... | ..... | ..... | ..... | ..... | ...... | ...... | R/W      scroll X reg
+ LY   FF44    .... | .... | ..... | ..... | ..... | ..... | ...... | ...... | R        y-coord during displ
+ LYC  FF44    .... | .... | ..... | ..... | ..... | ..... | ...... | ...... | R/W      LY compare reg
+ DMA  FF46    .... | .... | ..... | ..... | ..... | ..... | ...... | ...... | W        W initiates txn. $00--$DF
+ BGP  FF47    .... | .... | ..... | ..... | ..... | ..... | ...... | ...... | W        bg palette data
+
+ TODO: continue
+
+ -- register descriptions --
+ IF ::::::::
+   d7 d6 d5   d4                       d3                d2          d1               d0
+   \  \  \  | terminals P10-P13 HIGH | end of serial tx | timer ovf | LCDC ctl STAT | vblank
+
+ IE ::::::::
+   ibid
+
+i dont wanna be stuck in your passenger seat ! just let me out ! i gotta cry a while and i cant tell you whyyyyyy
+*/
 
 impl Lr35902 {
     pub fn new() -> Self {
@@ -268,6 +317,28 @@ impl Lr35902 {
             let o_offs = operands[0];
             (true, o_offs)
         }
+    }
+
+    fn stack_push(&mut self, val: u16) {
+        self.sp -= 2;
+        //  /new sp /old sp
+        // v       v
+        // msb lsb ...
+        self.mem_write(self.sp, ((0xff00 & self.pc) >> 8) as u8); // msb
+        self.mem_write(self.sp + 1, (0xff & self.pc) as u8); // lsb
+    }
+
+    fn stack_pop(&mut self) -> u16 {
+        let val = ((self.mem_read(self.sp) as u16) << 8) | (self.mem_read(self.sp + 1) as u16);
+        self.sp += 2;
+
+        val
+    }
+
+    // TODO?
+    fn clear_hn(&mut self) {
+        self.regs.f -= Flags::H;
+        self.regs.f -= Flags::N;
     }
 
     pub fn run_one_instr(&mut self, instr: &Instruction) -> u32 {
@@ -341,9 +412,8 @@ impl Lr35902 {
                     _ => unreachable!("bad LD dest operand"),
                 }
             }
-            DEC => todo!(),
             INC => {
-                let opr = instr.operands()[0];
+                let [opr, _] = instr.operands();
                 if opr.is_indirect() {
                     let addr = self.compute_addr(&opr);
                     let val = self.mem_read(addr);
@@ -357,13 +427,29 @@ impl Lr35902 {
                     1
                 }
             }
+            DEC => {
+                let [opr, _] = instr.operands();
+                if opr.is_indirect() {
+                    let addr = self.compute_addr(&opr);
+                    let val = self.mem_read(addr);
+                    self.mem_write(addr, val.wrapping_add(1));
+
+                    3
+                } else {
+                    let val = self.read_src8_opr(&opr);
+                    self.write_reg8_opr(&opr, val.wrapping_add(1));
+
+                    1
+                }
+            }
+
             ADD => todo!(),
             ADC => todo!(),
             SBC => todo!(),
             SUB => todo!(),
             AND => {
                 // AND A, x
-                let operand = instr.operands()[0];
+                let [operand, _] = instr.operands();
                 let other = self.read_src8_opr(&operand);
 
                 self.regs.a &= other;
@@ -379,7 +465,7 @@ impl Lr35902 {
                 }
             }
             XOR => {
-                let operand = instr.operands()[0];
+                let [operand, _] = instr.operands();
                 let other = self.read_src8_opr(&operand);
                 self.regs.a &= other;
                 self.regs.f = Flags::empty();
@@ -395,8 +481,20 @@ impl Lr35902 {
             }
             OR => todo!(),
             CP => todo!(),
-            POP => todo!(),
-            PUSH => todo!(),
+            POP => {
+                let [o_dest, _] = instr.operands();
+                let val = self.stack_pop();
+                self.regs.set_pair_by_operand(o_dest, val);
+
+                4
+            }
+            PUSH => {
+                let [o_src, _] = instr.operands();
+                let val = self.regs.pair_by_operand(o_src).unwrap();
+                self.stack_push(val);
+
+                4
+            }
             JP => todo!(),
             JR => {
                 // PC-relative jump, possibly conditional
@@ -420,29 +518,24 @@ impl Lr35902 {
                 let (taken, o_addr) = self.compute_branch(instr.operands());
                 log::trace!("CALL: taken={}", taken);
                 if taken {
-                    let addr = if let Operand::D16(imm) = o_addr { imm } else { unreachable!() };
-                    self.sp -= 2;
-                    //  /new sp /old sp
-                    // v       v
-                    // msb lsb ...
-                    self.mem_write(self.sp, ((0xff00 & self.pc) >> 8) as u8); // msb
-                    self.mem_write(self.sp + 1, (0xff & self.pc) as u8); // lsb
+                    let addr = if let Operand::D16(imm) = o_addr {
+                        imm
+                    } else {
+                        unreachable!()
+                    };
+                    self.stack_push(self.pc);
                     self.pc = addr;
 
                     6
                 } else {
                     3
                 }
-            },
+            }
             RET => todo!(),
             RETI => todo!(),
             HALT => todo!(),
             RST => todo!(),
             STOP => todo!(),
-            RLCA => todo!(),
-            RRCA => todo!(),
-            RLA => todo!(),
-            RRA => todo!(),
             DAA => {
                 // decimal adjust accumulator. annoying BCD shit
                 todo!()
@@ -458,16 +551,14 @@ impl Lr35902 {
             SCF => {
                 // set carry flag; clears N, H
                 self.regs.f |= Flags::CY;
-                self.regs.f -= Flags::H;
-                self.regs.f -= Flags::N;
+                self.clear_hn();
 
                 1
             }
             CCF => {
                 // complement carry flag; clears N, H
                 self.regs.f.toggle(Flags::CY);
-                self.regs.f -= Flags::H;
-                self.regs.f -= Flags::N;
+                self.clear_hn();
 
                 1
             }
@@ -497,12 +588,43 @@ impl Lr35902 {
             }
             RLC => todo!(),
             RRC => todo!(),
-            RL => todo!(),
+            RL => {
+                // rotate left through carry; arbitrary register or [HL]
+                let [o_x, _] = instr.operands();
+                let mut x = self.read_src8_opr(o_x);
+                let cy = (x & 0x80) != 0;
+                x = (x << 1) | (cy as u8);
+                self.regs.f.set(Flags::CY, cy);
+
+                if o_x.is_indirect() {
+                    let addr = self.compute_addr(o_x);
+                    self.mem_write(addr, x);
+
+                    4
+                } else {
+                    self.write_reg8_opr(o_x, x);
+                    2
+                }
+            }
+            RLA => {
+                let mut x = self.regs.a;
+                let cy = (x & 0x80) != 0;
+                x = (x << 1) | (cy as u8);
+                self.regs.f.set(Flags::CY, cy);
+                self.regs.a = x;
+
+                1
+            }
             RR => todo!(),
+            RLCA => todo!(),
+            RRCA => todo!(),
+            RRA => todo!(),
             SLA => todo!(),
             SRA => todo!(),
-            SWAP => todo!(),
             SRL => todo!(),
+            SWAP => todo!(),
+            RES => todo!(),
+            SET => todo!(),
             BIT => {
                 // Set Z based on bit n in an 8-bit value
                 let [o_bit, o_src] = instr.operands();
@@ -522,8 +644,6 @@ impl Lr35902 {
                     2
                 }
             }
-            RES => todo!(),
-            SET => todo!(),
         }
     }
 
