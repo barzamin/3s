@@ -342,7 +342,21 @@ impl Lr35902 {
                 }
             }
             DEC => todo!(),
-            INC => todo!(),
+            INC => {
+                let opr = instr.operands()[0];
+                if opr.is_indirect() {
+                    let addr = self.compute_addr(&opr);
+                    let val = self.mem_read(addr);
+                    self.mem_write(addr, val.wrapping_add(1));
+
+                    3
+                } else {
+                    let val = self.read_src8_opr(&opr);
+                    self.write_reg8_opr(&opr, val.wrapping_add(1));
+
+                    1
+                }
+            }
             ADD => todo!(),
             ADC => todo!(),
             SBC => todo!(),
@@ -459,7 +473,28 @@ impl Lr35902 {
             }
             DI => todo!(),
             EI => todo!(),
-            LDH => todo!(),
+            LDH => {
+                let [dest, src] = instr.operands();
+                match dest {
+                    Operand::DerefHighD8(_) | Operand::DerefHighC => {
+                        // going to memory
+                        let addr = self.compute_addr(dest);
+                        let val = self.read_src8_opr(src);
+                        self.mem_write(addr, val);
+                    }
+                    Operand::A => {
+                        let addr = self.compute_addr(src);
+                        self.regs.a = self.mem_read(addr);
+                    }
+                    _ => unreachable!(),
+                }
+
+                if dest.is_imm8() || src.is_imm8() {
+                    3
+                } else {
+                    2
+                }
+            }
             RLC => todo!(),
             RRC => todo!(),
             RL => todo!(),
