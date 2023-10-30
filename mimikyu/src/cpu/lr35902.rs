@@ -342,6 +342,30 @@ impl Lr35902 {
         self.regs.f -= Flags::N;
     }
 
+
+    // insn helpers
+    /// computes dec and sets flags
+    fn dec_8bit(&mut self, val: u8) -> u8 {
+        let res = val.wrapping_sub(1);
+        self.regs.f &= Flags::CY; // wipe everything else; preserve cy
+        self.regs.f |= Flags::N;
+        self.regs.f.set(Flags::Z, res == 0);
+        self.regs.f.set(Flags::H, (res & 0xf) == 0xf);
+
+        res
+    }
+
+    fn inc_8bit(&mut self, val: u8) -> u8 {
+        let res = val.wrapping_add(1);
+        self.regs.f &= Flags::CY; // wipe everything else; preserve cy
+        self.regs.f |= Flags::N;
+        self.regs.f.set(Flags::Z, res == 0);
+        self.regs.f.set(Flags::H, (res & 0xf) == 0x0);
+
+        res
+    }
+
+
     pub fn run_one_instr(&mut self, instr: &Instruction) -> u32 {
         use yaxpeax_sm83::Opcode::*;
         match instr.opcode() {
@@ -416,6 +440,7 @@ impl Lr35902 {
             INC => {
                 let [opr, _] = instr.operands();
                 if opr.is_reg16() {
+                    // TODO: simulate $ff00 inc/dec OAM bug
                     let val = self.read_src16_opr(opr);
                     self.write_reg16_opr(opr, val.wrapping_add(1));
 
@@ -423,12 +448,14 @@ impl Lr35902 {
                 } else if opr.is_indirect() {
                     let addr = self.compute_addr(opr);
                     let val = self.mem_read(addr);
-                    self.mem_write(addr, val.wrapping_add(1));
+                    let res = self.inc_8bit(val);
+                    self.mem_write(addr, res);
 
                     3
                 } else {
                     let val = self.read_src8_opr(opr);
-                    self.write_reg8_opr(opr, val.wrapping_add(1));
+                    let res = self.inc_8bit(val);
+                    self.write_reg8_opr(opr, res);
 
                     1
                 }
@@ -436,6 +463,7 @@ impl Lr35902 {
             DEC => {
                 let [opr, _] = instr.operands();
                 if opr.is_reg16() {
+                    // TODO: simulate $ff00 inc/dec OAM bug
                     let val = self.read_src16_opr(opr);
                     self.write_reg16_opr(opr, val.wrapping_sub(1));
 
@@ -443,18 +471,19 @@ impl Lr35902 {
                 } else if opr.is_indirect() {
                     let addr = self.compute_addr(opr);
                     let val = self.mem_read(addr);
-                    self.mem_write(addr, val.wrapping_sub(1));
+                    let res = self.dec_8bit(val);
+                    self.mem_write(addr, res);
 
                     3
                 } else {
                     let val = self.read_src8_opr(opr);
-                    self.write_reg8_opr(opr, val.wrapping_sub(1));
+                    let res = self.dec_8bit(val);
+                    self.write_reg8_opr(opr, res);
 
                     1
                 }
             }
 
-            ADD => todo!(),
             ADC => todo!(),
             SBC => todo!(),
             SUB => todo!(),
