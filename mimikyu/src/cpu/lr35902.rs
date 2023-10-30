@@ -349,7 +349,6 @@ impl Lr35902 {
         self.regs.f -= Flags::N;
     }
 
-
     // insn helpers
     /// computes dec and sets flags
     fn dec_8bit(&mut self, val: u8) -> u8 {
@@ -371,7 +370,6 @@ impl Lr35902 {
 
         res
     }
-
 
     pub fn run_one_instr(&mut self, instr: &Instruction) -> u32 {
         use yaxpeax_sm83::Opcode::*;
@@ -428,7 +426,8 @@ impl Lr35902 {
                     | Operand::DerefBC
                     | Operand::DerefDE
                     | Operand::DerefDecHL
-                    | Operand::DerefIncHL => {
+                    | Operand::DerefIncHL
+                    | Operand::A16(_) => {
                         // 8 bits to memory, full 16b address
                         let val = self.read_src8_opr(src);
                         let addr = self.compute_addr(dest);
@@ -440,7 +439,6 @@ impl Lr35902 {
                             2
                         } // cy
                     }
-                    Operand::A16(_) => todo!(), // 16 bits to memory
                     _ => unreachable!("bad LD dest operand"),
                 }
             }
@@ -505,8 +503,12 @@ impl Lr35902 {
 
                 self.regs.a = (res & 0xff) as u8;
 
-                if opr.is_indirect() || opr.is_imm8() { 2 } else { 1 }
-            },
+                if opr.is_indirect() || opr.is_imm8() {
+                    2
+                } else {
+                    1
+                }
+            }
             SUB => {
                 let [opr, _] = instr.operands();
                 let subtrahend = self.read_src8_opr(opr);
@@ -521,8 +523,12 @@ impl Lr35902 {
 
                 self.regs.a = (res & 0xff) as u8;
 
-                if opr.is_indirect() || opr.is_imm8() { 2 } else { 1 }
-            },
+                if opr.is_indirect() || opr.is_imm8() {
+                    2
+                } else {
+                    1
+                }
+            }
             ADC => todo!(),
             SBC => todo!(),
             CP => {
@@ -537,8 +543,12 @@ impl Lr35902 {
                 self.regs.f.set(Flags::H, res_lower > 0xf);
                 self.regs.f.set(Flags::CY, res > 0xff);
 
-                if opr.is_indirect() || opr.is_imm8() { 2 } else { 1 }
-            },
+                if opr.is_indirect() || opr.is_imm8() {
+                    2
+                } else {
+                    1
+                }
+            }
             AND => {
                 // AND A, x
                 let [operand, _] = instr.operands();
@@ -803,7 +813,7 @@ impl Lr35902 {
     }
 
     fn compute_addr(&mut self, dest: &Operand) -> u16 {
-        match dest {
+        match *dest {
             Operand::DerefHL => self.regs.hl(),
             Operand::DerefBC => self.regs.bc(),
             Operand::DerefDE => self.regs.de(),
@@ -818,7 +828,8 @@ impl Lr35902 {
                 a
             }
             Operand::DerefHighC => 0xff00 | (self.regs.c as u16),
-            Operand::DerefHighD8(imm) => 0xff00 | (*imm as u16),
+            Operand::DerefHighD8(imm) => 0xff00 | (imm as u16),
+            Operand::A16(addr) => addr,
             _ => unreachable!(),
         }
     }
@@ -843,8 +854,8 @@ impl Lr35902 {
             self.regs.pair_by_operand(operand).unwrap()
         } else {
             match operand {
-            Operand::SP => self.sp,
-            Operand::SPWithOffset(offs) => self.sp.wrapping_add_signed(*offs as i16), // LDHL SP, e
+                Operand::SP => self.sp,
+                Operand::SPWithOffset(offs) => self.sp.wrapping_add_signed(*offs as i16), // LDHL SP, e
                 _ => unimplemented!("invalid src16 opr {:?}", operand),
             }
         }
