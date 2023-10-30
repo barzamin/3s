@@ -484,9 +484,54 @@ impl Lr35902 {
                 }
             }
 
+            ADD => {
+                let [opr, _] = instr.operands();
+                let addend = self.read_src8_opr(opr);
+
+                let res_lower = (self.regs.a & 0xf).wrapping_add(addend & 0xf);
+                let res = (self.regs.a as u16).wrapping_add(addend as u16);
+
+                self.regs.f = Flags::empty();
+                self.regs.f.set(Flags::Z, res == 0);
+                self.regs.f.set(Flags::H, res_lower > 0xf);
+                self.regs.f.set(Flags::CY, res > 0xff);
+
+                self.regs.a = (res & 0xff) as u8;
+
+                if opr.is_indirect() || opr.is_imm8() { 2 } else { 1 }
+            },
+            SUB => {
+                let [opr, _] = instr.operands();
+                let subtrahend = self.read_src8_opr(opr);
+
+                let res_lower = (self.regs.a & 0xf).wrapping_sub(subtrahend & 0xf);
+                let res = (self.regs.a as u16).wrapping_sub(subtrahend as u16);
+
+                self.regs.f = Flags::N;
+                self.regs.f.set(Flags::Z, res == 0);
+                self.regs.f.set(Flags::H, res_lower > 0xf);
+                self.regs.f.set(Flags::CY, res > 0xff);
+
+                self.regs.a = (res & 0xff) as u8;
+
+                if opr.is_indirect() || opr.is_imm8() { 2 } else { 1 }
+            },
             ADC => todo!(),
             SBC => todo!(),
-            SUB => todo!(),
+            CP => {
+                let [opr, _] = instr.operands();
+                let subtrahend = self.read_src8_opr(opr);
+
+                let res_lower = (self.regs.a & 0xf).wrapping_sub(subtrahend & 0xf);
+                let res = (self.regs.a as u16).wrapping_sub(subtrahend as u16);
+
+                self.regs.f = Flags::empty();
+                self.regs.f.set(Flags::Z, res == 0);
+                self.regs.f.set(Flags::H, res_lower > 0xf);
+                self.regs.f.set(Flags::CY, res > 0xff);
+
+                if opr.is_indirect() || opr.is_imm8() { 2 } else { 1 }
+            },
             AND => {
                 // AND A, x
                 let [operand, _] = instr.operands();
@@ -774,13 +819,17 @@ impl Lr35902 {
         }
     }
 
-    fn read_src16_opr(&self, src: &Operand) -> u16 {
-        match src {
-            Operand::HL => self.regs.hl(),
+    fn read_src16_opr(&self, operand: &Operand) -> u16 {
+        if let &Operand::D16(imm) = operand {
+            imm
+        } else if operand.is_reg16() {
+            self.regs.pair_by_operand(operand).unwrap()
+        } else {
+            match operand {
             Operand::SP => self.sp,
-            Operand::D16(imm) => *imm,
             Operand::SPWithOffset(offs) => self.sp.wrapping_add_signed(*offs as i16), // LDHL SP, e
-            _ => unimplemented!("invalid src16 opr {:?}", src),
+                _ => unimplemented!("invalid src16 opr {:?}", operand),
+            }
         }
     }
 }
