@@ -292,8 +292,9 @@ impl Lr35902 {
         }
     }
 
-    pub fn mem_write(&self, addr: u16, val: u8) {
+    pub fn mem_write(&mut self, addr: u16, val: u8) {
         debug!("memory: write {:#06x} <- {:#04x}", addr, val);
+        self.memory[addr as usize] = val;
     }
     pub fn mem_read(&self, addr: u16) -> u8 {
         let val = self.memory[addr as usize];
