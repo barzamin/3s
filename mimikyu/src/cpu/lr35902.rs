@@ -1,6 +1,7 @@
 use bitflags::bitflags;
 use core::fmt;
 use log::{debug, trace};
+use std::{fs::File, io::Write};
 use yaxpeax_arch::{Decoder, ReadError, Reader};
 use yaxpeax_sm83::{InstDecoder, Instruction, Operand};
 
@@ -161,7 +162,10 @@ pub struct Lr35902 {
 
     pub memory: [u8; 0xffff],
 
+    // junk
     reader_mark: u16,
+
+    pc_trace_f: File,
 }
 
 /// hack: yaxpeax is actually extremely bad at this type of modeling.
@@ -288,7 +292,10 @@ impl Lr35902 {
             regs: Registers::default(),
             memory: [0; 0xffff],
 
+            // junk
             reader_mark: 0,
+
+            pc_trace_f: File::create("pc_transition.trace").unwrap(),
         }
     }
 
@@ -565,7 +572,6 @@ impl Lr35902 {
                 }
             }
             OR => todo!(),
-            CP => todo!(),
             POP => {
                 let [o_dest, _] = instr.operands();
                 let val = self.stack_pop();
@@ -750,12 +756,21 @@ impl Lr35902 {
     pub fn execute(&mut self, mut cycles: i32) {
         let decoder = InstDecoder::default();
         loop {
+            let from_pc = self.pc;
             trace!("run instruction at pc={:#06x}", self.pc);
             let instr = decoder.decode(self).unwrap();
             trace!("decoded: {} ({:?})", instr, instr);
 
             let latency = self.run_one_instr(&instr);
             trace!("completed: {} cycles", latency);
+            let to_pc = self.pc;
+
+            writeln!(
+                self.pc_trace_f,
+                "{:04x} -> {:04x} | {}",
+                from_pc, to_pc, instr
+            )
+            .unwrap();
 
             {
                 trace!("pc: {:#06x} sp: {:#06x}", self.pc, self.sp);
@@ -767,6 +782,8 @@ impl Lr35902 {
                 break;
             }
         }
+
+        self.pc_trace_f.flush().unwrap();
     }
 
     fn write_reg8_opr(&mut self, dest: &Operand, val: u8) {
