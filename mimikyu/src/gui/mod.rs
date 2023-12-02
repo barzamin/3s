@@ -1,4 +1,7 @@
-use std::time::Instant;
+use std::{
+    sync::{Arc, RwLock},
+    time::Instant,
+};
 
 use anyhow::Result;
 use imgui::{FontConfig, FontSource, MouseCursor};
@@ -12,6 +15,12 @@ use winit::{
     event_loop::EventLoop,
     window::{Window, WindowBuilder},
 };
+
+use crate::cpu::lr35902::Lr35902;
+
+use self::debugger::show_registers;
+
+mod debugger;
 
 pub struct GuiCtx {
     imgui: imgui::Context,
@@ -91,7 +100,8 @@ impl GuiCtx {
         }
 
         // -- gui start --
-        ui.show_about_window(&mut self.about_open);
+        // ui.show_about_window(&mut self.about_open);
+        show_registers(ui);
         // -- gui end --
 
         let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -117,26 +127,13 @@ impl GuiCtx {
     }
 }
 
-// fn draw(w: usize, h: usize, fb: &mut [u8]) {
-//     for x in 0..w {
-//         for y in 0..h {
-//             // rgba8
-//             let p = (y * w + x) * 4;
-//             fb[p + 0] = 0xff;
-//             fb[p + 1] = 0x00;
-//             fb[p + 2] = 0xff;
-//             fb[p + 3] = 0xff;
-//         }
-//     }
-// }
-
-pub fn run() -> Result<()> {
-    let [fb_width, fb_height] = [640, 480];
+pub fn run(fb_size: [u32; 2]) -> Result<()> {
+    let [fb_width, fb_height] = fb_size;
 
     let evloop = EventLoop::new();
     let window = WindowBuilder::new()
         .with_title("cps3emu")
-        .with_min_inner_size(LogicalSize::new(fb_width, fb_height))
+        .with_inner_size(LogicalSize::new(fb_width, fb_height))
         .build(&evloop)?;
 
     let window_size = window.inner_size();
@@ -155,6 +152,10 @@ pub fn run() -> Result<()> {
         match ev {
             Event::RedrawRequested(_) => {
                 // draw(fb_width as usize, fb_height as usize, pixels.frame_mut());
+                //
+                // get something from the returning buffers channel
+                // copy it over pixels.frame_mut()
+                // clear it and send back to the sim thread
 
                 gui.prepare(&window).expect("prepare");
 
@@ -178,6 +179,10 @@ pub fn run() -> Result<()> {
             } => match window_event {
                 WindowEvent::CloseRequested => flow.set_exit(),
                 WindowEvent::Resized(size) => {
+                    log::info!("resized to {:?}", size);
+                    if size.width == u32::MAX || size.height == u32::MAX {
+                        return; // work around macOS sonoma bug
+                    }
                     pixels
                         .resize_surface(size.width, size.height)
                         .expect("can't resize");

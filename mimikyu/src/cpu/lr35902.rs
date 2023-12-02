@@ -155,6 +155,12 @@ impl Registers {
     }
 }
 
+pub struct InstructionTrace {
+    pub from_pc: u16,
+    pub to_pc: u16,
+    pub instr: Instruction,
+}
+
 pub struct Lr35902 {
     pub pc: u16,
     pub sp: u16,
@@ -165,7 +171,7 @@ pub struct Lr35902 {
     // junk
     reader_mark: u16,
 
-    pc_trace_f: File,
+    instr_tracer: Box<dyn FnMut(InstructionTrace)>,
 }
 
 /// hack: yaxpeax is actually extremely bad at this type of modeling.
@@ -285,7 +291,7 @@ i dont wanna be stuck in your passenger seat ! just let me out ! i gotta cry a w
 */
 
 impl Lr35902 {
-    pub fn new() -> Self {
+    pub fn new(instr_tracer: impl FnMut(InstructionTrace) + 'static) -> Self {
         Self {
             pc: 0,
             sp: 0,
@@ -295,17 +301,17 @@ impl Lr35902 {
             // junk
             reader_mark: 0,
 
-            pc_trace_f: File::create("pc_transition.trace").unwrap(),
+            instr_tracer: Box::new(instr_tracer),
         }
     }
 
     pub fn mem_write(&mut self, addr: u16, val: u8) {
-        debug!("memory: write {:#06x} <- {:#04x}", addr, val);
+        trace!("memory: write {:#06x} <- {:#04x}", addr, val);
         self.memory[addr as usize] = val;
     }
     pub fn mem_read(&self, addr: u16) -> u8 {
         let val = self.memory[addr as usize];
-        debug!("memory: read {:#06x} -> {:#04x}", addr, val);
+        trace!("memory: read {:#06x} -> {:#04x}", addr, val);
         val
     }
 
@@ -775,12 +781,11 @@ impl Lr35902 {
             trace!("completed: {} cycles", latency);
             let to_pc = self.pc;
 
-            writeln!(
-                self.pc_trace_f,
-                "{:04x} -> {:04x} | {}",
-                from_pc, to_pc, instr
-            )
-            .unwrap();
+            (self.instr_tracer)(InstructionTrace {
+                from_pc,
+                to_pc,
+                instr,
+            });
 
             {
                 trace!("pc: {:#06x} sp: {:#06x}", self.pc, self.sp);
@@ -792,8 +797,6 @@ impl Lr35902 {
                 break;
             }
         }
-
-        self.pc_trace_f.flush().unwrap();
     }
 
     fn write_reg8_opr(&mut self, dest: &Operand, val: u8) {
